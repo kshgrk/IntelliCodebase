@@ -1,0 +1,80 @@
+commands:
+  create_file:
+    description: "Creates a new file with the given name."
+    function: "create_file" # Using Python function
+    parameters:
+      - name: "filename"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]+$"
+      - name: "content"
+        type: "string"
+        validation: ".*"
+        required: false
+  delete_file:
+    command: "rm" # Still using rm for simplicity
+    parameters:
+      - name: "filename"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]+$"
+  run_script:
+    command: "bash" # Still using bash for shell scripts
+    parameters:
+      - name: "scriptname"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]+\\.sh$"
+  append_to_file:
+    description: "Appends the given content to a file."
+    function: "append_to_file" # Using Python function
+    parameters:
+      - name: "filename"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]+$"
+      - name: "content"
+        type: "string"
+        validation: ".+"  # Match any non-empty string
+  overwrite_file:
+    description: "Overwrites the given content to a file."
+    function: "overwrite_file" # Using Python function
+    parameters:
+      - name: "filename"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]+$"
+      - name: "content"
+        type: "string"
+        validation: ".+"
+  run_python_script:
+    command: "python3" # Still using python3
+    parameters:
+      - name: "scriptname"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]+\\.py$"
+  list_directory:
+    command: "ls -l" # Still using ls -l
+    parameters:
+      - name: "directory"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-/]*$"  # Allow directory paths
+  create_directory:
+    command: "mkdir -p" # Still using mkdir -p
+    parameters:
+      - name: "directory_name"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-/]+$"
+  analyze_codebase:
+    description: "Analyzes the specified codebase for issues. Optionally analyzes a single file if filename is provided."
+    function: "analyze_codebase"
+    parameters:
+      - name: "base_path"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-/]+$"
+      - name: "filename"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]*$"
+        required: false
+  read_file:
+    description: "Reads the content of the specified file."
+    function: "read_file"
+    parameters:
+      - name: "filename"
+        type: "string"
+        validation: "^[a-zA-Z0-9_\\.\\-]+$"

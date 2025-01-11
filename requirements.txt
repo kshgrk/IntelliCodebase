@@ -1,0 +1,4 @@
+flask
+google-cloud-aiplatform
+pyyaml
+python-dotenv
