@@ -71,6 +71,10 @@ commands:
         type: "string"
         validation: "^[a-zA-Z0-9_\\.\\-]*$"
         required: false
+      - name: "issue"
+        type: "string"
+        validation: ".+"
+        required: false
   read_file:
     description: "Reads the content of the specified file."
     function: "read_file"

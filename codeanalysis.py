@@ -10,6 +10,7 @@ from vertexai.generative_models import (
 )
 from vertexai.preview import caching
 from vertexai.preview.generative_models import GenerativeModel
+from vertexai.preview.tokenization import get_tokenizer_for_model
 
 @dataclass
 class CodeChunk:
@@ -38,6 +39,9 @@ class CodebaseAnalyzer:
         self.LOCATION = os.getenv("REGION")
         self.min_token_count = min_token_count
         vertexai.init(project=self.PROJECT_ID, location=self.LOCATION)
+        self.model_name = "gemini-1.5-pro-002" # Specify the model you'll be using
+        self.tokenizer = get_tokenizer_for_model(self.model_name)
+
 
     def load_progress(self) -> Dict:
         if os.path.exists(self.progress_file):
@@ -102,18 +106,27 @@ class CodebaseAnalyzer:
             last_modified_time = os.path.getmtime(file_path)
         except OSError:
             # Handle cases where the file might not exist
+            print(f"Error: Could not get modification time for {file_path}")
             return False
 
-        cache_creation_time = datetime.datetime.fromisoformat(self.cache_mapping["codebase_cache_name"].split(".")[-1])
-        
+        cache_creation_time_str = self.cache_mapping["codebase_cache_name"].split(".")[-1]
+
+        try:
+            cache_creation_time = datetime.datetime.fromisoformat(cache_creation_time_str)
+        except ValueError as e:
+            print(f"Error parsing cache creation time: {e}")
+            print(f"Cache creation time string: {cache_creation_time_str}")
+            return False
+
         # Convert to Unix timestamp for comparison
         cache_creation_timestamp = cache_creation_time.timestamp()
-        
+
         return last_modified_time <= cache_creation_timestamp
 
-    def analyze_chunk(self, chunk: CodeChunk, model) -> List[Issue]:
+    def analyze_chunk(self, chunk: CodeChunk, model, issue_query: Optional[str] = None) -> List[Issue]:
         # Retrieve CachedContent
         cached_content_name = self.cache_mapping.get("codebase_cache_name")
+        print(f"Issue query in analyze_chunk: {issue_query}")
 
         if cached_content_name:
             # Use cached model
@@ -125,23 +138,29 @@ class CodebaseAnalyzer:
             # Fallback to the original model if no cache exists
             cached_model = model
             print(
-                "Warning: No cache found. Using the original model for analysis."
+                f"Warning: No cache found. Using the original model for analysis."
             )
 
+        # Construct prompt for the LLM
+        # Filter out padding content before sending to the model
         chunk_content = chunk.content
         if "--- PADDING START ---" in chunk.content and "--- PADDING END ---" in chunk.content:
             chunk_content = chunk_content.split("--- PADDING START ---")[0] + chunk_content.split("--- PADDING END ---")[1]
 
-        # Construct prompt for the LLM
         prompt = f"""Analyze the following code chunk for issues:
         File: {chunk.file_path}
         Lines: {chunk.start_line}-{chunk.end_line}
 
         ```
         {chunk_content}
-
         ```
+        """
 
+        # Add issue query to the prompt if provided
+        if issue_query:
+            prompt += f"\nSpecifically with respect to: {issue_query}\n"
+
+        prompt += """
         Identify any issues and suggest fixes. Return the response in the format:
         Issue: <Description of the issue>
         Fix Suggestion: <Suggested fix, or None if no fix is suggested>
@@ -189,7 +208,8 @@ class CodebaseAnalyzer:
 
         return issues
 
-    def process_codebase(self, model):
+    def process_codebase(self, model, issue_query: Optional[str] = None):
+        print(f'Issue query in process_codebase: {issue_query}')
         progress = self.load_progress()
         self.issues_db = {}  # Reset issues_db
 
@@ -214,23 +234,29 @@ class CodebaseAnalyzer:
 
         process_directory(self.base_path)  # Start recursive processing from the base path
 
-        # --- Padding Logic ---
+        # --- Padding Logic with Accurate Token Counting ---
         if codebase_content_parts:
-            total_tokens = sum(len(part.text.split()) for part in codebase_content_parts)  # Estimate token count
+            total_tokens = 0
+            for part in codebase_content_parts:
+                # Ensure that we are passing a string to the tokenizer
+                response = self.tokenizer.count_tokens(part.text)
+                total_tokens += response.total_tokens
 
             if total_tokens < self.min_token_count:
                 padding_tokens_needed = self.min_token_count - total_tokens
-                # Create padding content that is unlikely to interfere with analysis
-                padding_content = "This is padding content to meet the minimum token requirement for caching. " * (padding_tokens_needed // 10 + 1) 
-                # Add a unique identifier to easily recognize and ignore padding later
+                # Create padding content
+                padding_content = "This is padding content to meet the minimum token requirement for caching. " * (padding_tokens_needed // 10 + 1)
                 padding_content = f"--- PADDING START ---\n{padding_content}\n--- PADDING END ---"
-                codebase_content_parts.append(Part.from_text(padding_content))
-                print(f"Added padding of {len(padding_content.split())} tokens.")
+                
+                # Ensure that padding content itself is treated as a single part
+                padding_part = Part.from_text(padding_content)
+                codebase_content_parts.append(padding_part)
+                print(f"Added padding of {self.tokenizer.count_tokens(padding_part.text).total_tokens} tokens.")
 
         # Create CachedContent for the entire codebase if not exists or if cache is invalid
         if codebase_content_parts and ("codebase_cache_name" not in self.cache_mapping or not self.is_cache_valid(codebase_files[0])):
             cached_content = caching.CachedContent.create(
-                model_name="gemini-1.5-pro-002",
+                model_name=self.model_name,
                 system_instruction="Analyze the following code for issues and suggest fixes.",
                 contents=codebase_content_parts,
                 ttl=datetime.timedelta(minutes=self.ttl),
@@ -243,8 +269,8 @@ class CodebaseAnalyzer:
         for file_path in codebase_files:
             chunks = self.get_file_chunks(file_path)
             for chunk in chunks:
-                # In analyze_chunk, make sure to ignore padding content when presenting to the model
-                issues = self.analyze_chunk(chunk, model)
+                # Pass the issue_query down to analyze_chunk
+                issues = self.analyze_chunk(chunk, model, issue_query=issue_query)
                 if issues:
                     for issue in issues:
                         self.issues_db.setdefault(file_path, []).append(

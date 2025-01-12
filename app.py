@@ -19,7 +19,7 @@ app = Flask(__name__)
 # --- Vertex AI Configuration ---
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 LOCATION = os.getenv("REGION")
-MODEL_NAME = "gemini-1.5-pro-001"
+MODEL_NAME = "gemini-2.0-flash-exp"
 
 vertexai.init(project=PROJECT_ID, location=LOCATION)
 
@@ -27,7 +27,6 @@ vertexai.init(project=PROJECT_ID, location=LOCATION)
 # Load command whitelist from commands.yaml
 with open("commands.yaml", "r") as f:
     COMMAND_WHITELIST = yaml.safe_load(f)
-
 
 # Create a function declaration for each command in the whitelist
 function_declarations = []
@@ -82,50 +81,115 @@ def chat_endpoint():
         data = request.get_json()
         user_input = data.get("message", "")
 
-        # Send Message to Gemini
-        response = chat.send_message(user_input)
-        print(f"Initial response: {response.candidates[0] if response.candidates else 'No candidates'}")
+        # Initialize text_parts here
+        text_parts = []
 
-        if not response.candidates:
-            return jsonify({"response": "No response from the model."})
+        # Basic parsing
+        analyze_command = "analyze the codebase"
+        if analyze_command in user_input.lower():
+            # Handling for "analyze the codebase"
+            parts = user_input.lower().split(analyze_command)
+            if len(parts) > 1:
+                path_part = parts[1].strip()
 
-        candidate = response.candidates[0]
+                if " for " in path_part:
+                    path, issue = path_part.split(" for ", 1)
+                    issue = issue.strip()
+                else:
+                    path = path_part
+                    issue = None
 
-        # Handle different response types
-        if candidate.content and candidate.content.parts:
-            # Get all text parts and combine them
-            text_parts = []
-            for part in candidate.content.parts:
-                if hasattr(part, 'text') and part.text:
-                    text_parts.append(part.text)
-                elif hasattr(part, 'function_call'):
-                    # Handle function call
-                    function_name = part.function_call.name
-                    function_args = {k: v for k, v in part.function_call.args.items()}
+                base_path = path.strip()
+                function_args = {"base_path": base_path, "issue": issue}
+                command_output = utils.analyze_codebase(function_args, model=chat)
 
-                    # Call functions from utils.py, passing the model
-                    if function_name == "analyze_codebase":
-                        command_output = utils.analyze_codebase(function_args, model=chat)
-                    elif function_name == "read_file":
-                        command_output = utils.read_file(function_args)
-                    else:
-                        command_output = utils.execute_command(function_name, function_args)
+                # Send function response back to model
+                function_response = Part.from_function_response(
+                    name="analyze_codebase",
+                    response={"content": command_output}
+                )
+                followup_response = chat.send_message(function_response)
 
-                    # Send function response back to model
-                    function_response = Part.from_function_response(
-                        name=function_name,
-                        response={"content": command_output}
-                    )
-                    followup_response = chat.send_message(function_response)
+                # Add function output to response
+                if followup_response.candidates:
+                    followup_text = followup_response.candidates[0].content.parts[0].text
+                    text_parts.append(f"Command output: {command_output}\n{followup_text}")
 
-                    # Add function output to response
-                    if followup_response.candidates:
-                        followup_text = followup_response.candidates[0].content.parts[0].text
-                        text_parts.append(f"Command output: {command_output}\n{followup_text}")
+        elif "analyze the file" in user_input.lower():
+            # Handling for "analyze the file"
+            parts = user_input.lower().split("analyze the file")
+            if len(parts) > 1:
+                path_part = parts[1].strip()
 
-            # Combine all responses
-            if text_parts:
-                return jsonify({"response": "\n".join(text_parts)})
+                if " for " in path_part:
+                    path, issue = path_part.split(" for ", 1)
+                    issue = issue.strip()
+                else:
+                    path = path_part
+                    issue = None
+
+                filename = os.path.basename(path)
+                base_path = os.path.dirname(path)
+
+                function_args = {"base_path": base_path, "filename": filename, "issue": issue}
+                command_output = utils.analyze_codebase(function_args, model=chat)
+
+                # Send function response back to model
+                function_response = Part.from_function_response(
+                    name="analyze_codebase",
+                    response={"content": command_output}
+                )
+                followup_response = chat.send_message(function_response)
+
+                # Add function output to response
+                if followup_response.candidates:
+                    followup_text = followup_response.candidates[0].content.parts[0].text
+                    text_parts.append(f"Command output: {command_output}\n{followup_text}")
+
+        else:
+            # Send Message to Gemini (non-analyze command)
+            response = chat.send_message(user_input)
+            print(f"Initial response: {response.candidates[0] if response.candidates else 'No candidates'}")
+
+            if not response.candidates:
+                return jsonify({"response": "No response from the model."})
+
+            candidate = response.candidates[0]
+            
+            # Handle different response types
+            if candidate.content and candidate.content.parts:
+                # Get all text parts and combine them
+                for part in candidate.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        text_parts.append(part.text)
+                    elif hasattr(part, 'function_call'):
+                        # Handle function call
+                        function_name = part.function_call.name
+                        function_args = {k: v for k, v in part.function_call.args.items()}
+                            
+                        # Call functions from utils.py, passing the model
+                        if function_name == "analyze_codebase":
+                            command_output = utils.analyze_codebase(function_args, model=chat)
+                        elif function_name == "read_file":
+                            command_output = utils.read_file(function_args)
+                        else:
+                            command_output = utils.execute_command(function_name, function_args)
+                            
+                        # Send function response back to model
+                        function_response = Part.from_function_response(
+                            name=function_name,
+                            response={"content": command_output}
+                        )
+                        followup_response = chat.send_message(function_response)
+
+                        # Add function output to response
+                        if followup_response.candidates:
+                            followup_text = followup_response.candidates[0].content.parts[0].text
+                            text_parts.append(f"Command output: {command_output}\n{followup_text}")
+
+        # Combine all responses
+        if text_parts:
+            return jsonify({"response": "\n".join(text_parts)})
 
         return jsonify({"response": "No clear response from the model."})
 

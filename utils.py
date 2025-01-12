@@ -27,6 +27,7 @@ def analyze_codebase(parameters, model):  # Add model as a parameter
     """
     base_path = parameters["base_path"]
     filename = parameters.get("filename")
+    issue_query = parameters.get("issue")
 
     analyzer = CodebaseAnalyzer(base_path)
 
@@ -36,7 +37,7 @@ def analyze_codebase(parameters, model):  # Add model as a parameter
         if os.path.exists(file_path):
             chunks = analyzer.get_file_chunks(file_path)
             for chunk in chunks:
-                issues = analyzer.analyze_chunk(chunk, model=model)  # Pass model to analyze_chunk
+                issues = analyzer.analyze_chunk(chunk, model=model, issue_query=issue_query)  # Pass issue_query
                 if issues:
                     analyzer.issues_db.setdefault(file_path, []).extend([
                         {"issue": issue, "cached_content_name": analyzer.cache_mapping.get(file_path)}
@@ -46,8 +47,7 @@ def analyze_codebase(parameters, model):  # Add model as a parameter
             return f"File not found: {file_path}"
     else:
         # Analyze all files in the base_path
-        print('no filename')
-        analyzer.process_codebase(model=model)  # Pass model to process_codebase
+        analyzer.process_codebase(model=model, issue_query=issue_query)  # Pass issue_query
 
     response_parts = []
     for file_path, issues_data in analyzer.issues_db.items():
